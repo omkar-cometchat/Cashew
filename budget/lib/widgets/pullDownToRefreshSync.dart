@@ -1,5 +1,6 @@
 import 'package:budget/colors.dart';
 import 'package:budget/functions.dart';
+import 'package:budget/struct/backendConfig.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
 import 'package:budget/widgets/navigationFramework.dart';
@@ -12,7 +13,8 @@ import 'package:flutter/services.dart';
 import 'package:timer_builder/timer_builder.dart';
 
 bool enableSwipeDownToRefresh(BuildContext context) {
-  return selectingTransactionsActive == 0 &&
+  return cashewBackendEnabled &&
+      selectingTransactionsActive == 0 &&
       runningCloudFunctions == false &&
       appStateSettings["hasSignedIn"] != false &&
       appStateSettings["backupSync"] == true &&

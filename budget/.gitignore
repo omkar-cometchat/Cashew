@@ -52,6 +52,7 @@ app.*.map.json
 /android/app/keystore.jks
 key.properties
 keystore.jks
+lib/struct/cometchatSecrets.dart
 
 /.firebase
 .firebase/

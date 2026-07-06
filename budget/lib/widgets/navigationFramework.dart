@@ -29,6 +29,7 @@ import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
 import 'package:budget/pages/walletDetailsPage.dart';
 import 'package:budget/pages/creditDebtTransactionsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
+import 'package:budget/struct/backendConfig.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/defaultPreferences.dart';
 import 'package:budget/struct/navBarIconsData.dart';
@@ -304,6 +305,7 @@ bool runningCloudFunctions = false;
 bool errorSigningInDuringCloud = false;
 Future<bool> runAllCloudFunctions(BuildContext context,
     {bool forceSignIn = false}) async {
+  if (!cashewBackendEnabled) return false;
   print("Running All Cloud Functions");
   runningCloudFunctions = true;
   errorSigningInDuringCloud = false;
@@ -432,7 +434,7 @@ class PageNavigationFrameworkState extends State<PageNavigationFramework> {
       initializeStoreAndPurchases(
           context: context, popRouteWithPurchase: false);
 
-      if (entireAppLoaded == false) {
+      if (cashewBackendEnabled && entireAppLoaded == false) {
         await runAllCloudFunctions(context);
       }
 

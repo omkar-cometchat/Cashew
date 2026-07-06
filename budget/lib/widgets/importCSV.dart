@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -22,12 +20,8 @@ import 'package:budget/struct/commonDateFormats.dart';
 import 'package:budget/widgets/viewAllTransactionsButton.dart';
 import 'package:drift/drift.dart' hide Column, Table;
 import 'package:easy_localization/easy_localization.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
-import 'dart:io';
 import 'package:csv/csv.dart';
-import 'package:flutter_charset_detector/flutter_charset_detector.dart';
 import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
@@ -52,52 +46,25 @@ class _ImportCSVState extends State<ImportCSV> {
   }
 
   Future<String?> _getCSVStringFromBackupFile() async {
-    dynamic csvStringOut = await openLoadingPopupTryCatch(() async {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        allowedExtensions: ['csv'],
-        type: FileType.custom,
-      );
-
-      if (result != null) {
-        String csvString;
-        if (kIsWeb) {
-          List<int> fileBytes = result.files.single.bytes!;
-          csvString = utf8.decode(fileBytes);
-        } else {
-          File file = File(result.files.single.path ?? "");
-          Uint8List fileBytes = await file.readAsBytes();
-          DecodingResult decoded = await CharsetDetector.autoDecode(fileBytes);
-          csvString = decoded.string;
-        }
-        // print(csvString);
-        return csvString;
-      } else {
-        throw "no-file-selected".tr();
-      }
-    }, onError: (e) {
-      print("Error opening CSV: " + e.toString());
-      openPopup(
-        context,
-        title: "csv-error".tr(),
-        description: "consider-csv-template".tr() + "\n" + e.toString(),
-        onCancelWithBoxContext: (BuildContext boxContext) async {
-          await saveSampleCSV(boxContext: boxContext);
-          popRoute(context);
-        },
-        onCancelLabel: "get-template".tr(),
-        icon: appStateSettings["outlinedIcons"]
-            ? Icons.error_outlined
-            : Icons.error_rounded,
-        onSubmitLabel: "ok".tr(),
-        onSubmit: () {
-          popRoute(context);
-        },
-        barrierDismissible: false,
-      );
-    });
-    if (csvStringOut is String) {
-      return csvStringOut;
-    }
+    openPopup(
+      context,
+      title: "csv-error".tr(),
+      description:
+          "Device CSV file import is disabled. Use Google Sheets import instead.",
+      onCancelWithBoxContext: (BuildContext boxContext) async {
+        await saveSampleCSV(boxContext: boxContext);
+        popRoute(context);
+      },
+      onCancelLabel: "get-template".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.error_outlined
+          : Icons.error_rounded,
+      onSubmitLabel: "ok".tr(),
+      onSubmit: () {
+        popRoute(context);
+      },
+      barrierDismissible: false,
+    );
     return null;
   }
 

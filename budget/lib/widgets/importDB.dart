@@ -1,7 +1,5 @@
-import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/struct/settings.dart';
-import 'package:budget/struct/syncClient.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/openSnackbar.dart';
@@ -9,49 +7,16 @@ import 'package:budget/widgets/settingsContainers.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
-import 'dart:io';
 
 Future<String?> importDBFileFromDevice(BuildContext context) async {
-  // Avoid using a file filter: PlatformException(FilePicker, Unsupported filter....
-  FilePickerResult? result = await FilePicker.platform.pickFiles();
-  if (result == null) {
-    openSnackbar(SnackbarMessage(
-      title: "error-importing".tr(),
-      description: "no-file-selected".tr(),
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.warning_outlined
-          : Icons.warning_rounded,
-    ));
-    return null;
-  }
-
-  String fileName = result.files.single.name;
-  if (fileName.endsWith('.sql') == false &&
-      fileName.endsWith('.sqlite') == false) {
-    openSnackbar(SnackbarMessage(
-      title: "import-warning".tr(),
-      description: "import-warning-description".tr(),
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.warning_outlined
-          : Icons.warning_rounded,
-    ));
-  }
-
-  await cancelAndPreventSyncOperation();
-
-  if (kIsWeb) {
-    Uint8List fileBytes = result.files.single.bytes!;
-    await overwriteDefaultDB(fileBytes);
-  } else {
-    File file = File(result.files.single.path ?? "");
-    Uint8List fileBytes = await file.readAsBytes();
-    await overwriteDefaultDB(fileBytes);
-  }
-  await resetLanguageToSystem(context);
-  await updateSettings("databaseJustImported", true,
-      pagesNeedingRefresh: [], updateGlobalState: false);
-  return result.files.single.name;
+  openSnackbar(SnackbarMessage(
+    title: "error-importing".tr(),
+    description: "Device file import is disabled.",
+    icon: appStateSettings["outlinedIcons"]
+        ? Icons.warning_outlined
+        : Icons.warning_rounded,
+  ));
+  return null;
 }
 
 Future importDB(BuildContext context, {ignoreOverwriteWarning = false}) async {

@@ -3,6 +3,7 @@ import 'package:budget/database/generatePreviewData.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/backendConfig.dart';
 import 'package:budget/struct/languageMap.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
@@ -452,7 +453,7 @@ class OnBoardingPageBodyState extends State<OnBoardingPageBody> {
                   ),
                 )
               : SizedBox.shrink(),
-          getPlatform() == PlatformOS.isIOS
+          getPlatform() == PlatformOS.isIOS || !cashewBackendEnabled
               ? SizedBox.shrink()
               : SettingsContainerOutlined(
                   onTap: () async {
@@ -534,7 +535,7 @@ class OnBoardingPageBodyState extends State<OnBoardingPageBody> {
                   icon: MoreIcons.google,
                   isExpanded: false,
                 ),
-          getPlatform() == PlatformOS.isIOS
+          getPlatform() == PlatformOS.isIOS || !cashewBackendEnabled
               ? SizedBox.shrink()
               : SizedBox(height: 8),
           getPlatform() == PlatformOS.isIOS

@@ -1,9 +1,11 @@
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart' hide AppSettings;
+import 'package:budget/pages/accountsPage.dart';
 import 'package:budget/pages/aboutPage.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/billSplitter.dart';
 import 'package:budget/pages/budgetsListPage.dart';
+import 'package:budget/pages/cometchatPage.dart';
 import 'package:budget/pages/creditDebtTransactionsPage.dart';
 import 'package:budget/pages/editHomePage.dart';
 import 'package:budget/pages/editObjectivesPage.dart';
@@ -14,6 +16,7 @@ import 'package:budget/pages/transactionsListPage.dart';
 import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
 import 'package:budget/struct/defaultPreferences.dart';
+import 'package:budget/struct/backendConfig.dart';
 import 'package:budget/struct/languageMap.dart';
 import 'package:budget/struct/navBarIconsData.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
@@ -199,23 +202,49 @@ class MorePages extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: Padding(
-                  padding: EdgeInsetsDirectional.symmetric(
-                      vertical: 5, horizontal: 4),
-                  child: SettingsContainer(
-                    onTap: () {
-                      openBottomSheet(context, RatingPopup(), fullSnap: true);
-                    },
-                    title: "feedback".tr(),
-                    icon: appStateSettings["outlinedIcons"]
-                        ? Icons.rate_review_outlined
-                        : Icons.rate_review_rounded,
-                    isOutlined: true,
-                  ),
+                child: SettingsContainerOpenPage(
+                  openPage: CometChatPage(),
+                  title: "Chat",
+                  icon: appStateSettings["outlinedIcons"]
+                      ? Icons.chat_bubble_outline
+                      : Icons.chat_bubble_rounded,
+                  isOutlined: true,
                 ),
               ),
             ],
           ),
+          if (cashewBackendEnabled)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsetsDirectional.symmetric(
+                        vertical: 5, horizontal: 4),
+                    child: SettingsContainer(
+                      onTap: () {
+                        openBottomSheet(context, RatingPopup(), fullSnap: true);
+                      },
+                      title: "feedback".tr(),
+                      icon: appStateSettings["outlinedIcons"]
+                          ? Icons.rate_review_outlined
+                          : Icons.rate_review_rounded,
+                      isOutlined: true,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SettingsContainerOpenPage(
+                    openPage: AccountsPage(),
+                    title: "data-backup".tr(),
+                    icon: appStateSettings["outlinedIcons"]
+                        ? Icons.cloud_outlined
+                        : Icons.cloud_rounded,
+                    isOutlined: true,
+                  ),
+                ),
+              ],
+            ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -241,7 +270,7 @@ class MorePages extends StatelessWidget {
                           ),
                         )
                       : SizedBox.shrink(),
-              if (hasSideNavigation == false)
+              if (hasSideNavigation == false && cashewBackendEnabled)
                 Expanded(
                     child: GoogleAccountLoginButton(
                   key: settingsGoogleAccountLoginButtonKey,
@@ -618,10 +647,11 @@ class SettingsPageContent extends StatelessWidget {
 
         ImportDB(),
 
-        GoogleAccountLoginButton(
-          isOutlinedButton: false,
-          forceButtonName: "google-drive".tr(),
-        ),
+        if (cashewBackendEnabled)
+          GoogleAccountLoginButton(
+            isOutlinedButton: false,
+            forceButtonName: "google-drive".tr(),
+          ),
       ],
     );
   }

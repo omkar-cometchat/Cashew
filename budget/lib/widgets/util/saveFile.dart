@@ -5,7 +5,6 @@ import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
 import 'package:budget/widgets/openSnackbar.dart';
 import 'package:easy_localization/easy_localization.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -153,29 +152,15 @@ Future<bool> saveFile({
   } catch (e) {
     print("Error saving file to device: " + e.toString());
     if (customDirectory == null) {
-      // Try again with selecting a custom directory
-      String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-      if (selectedDirectory == null) {
-        openSnackbar(SnackbarMessage(
-          title: errorMessage.tr(),
-          description: "no-folder-selected".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.warning_outlined
-              : Icons.warning_rounded,
-        ));
-        print("No folder selected");
-        return false;
-      } else {
-        return await saveFile(
-          boxContext: boxContext,
-          dataStore: dataStore,
-          dataString: dataString,
-          fileName: fileName,
-          successMessage: successMessage,
-          errorMessage: errorMessage,
-          customDirectory: selectedDirectory,
-        );
-      }
+      return await saveFile(
+        boxContext: boxContext,
+        dataStore: dataStore,
+        dataString: dataString,
+        fileName: fileName,
+        successMessage: successMessage,
+        errorMessage: errorMessage,
+        shareFile: true,
+      );
     } else {
       return await saveFile(
         boxContext: boxContext,

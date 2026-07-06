@@ -2,6 +2,7 @@ import 'package:budget/functions.dart';
 import 'package:budget/main.dart';
 import 'package:budget/pages/editCategoriesPage.dart';
 import 'package:budget/pages/exchangeRatesPage.dart';
+import 'package:budget/struct/backendConfig.dart';
 import 'package:budget/struct/defaultPreferences.dart';
 import 'package:budget/struct/navBarIconsData.dart';
 import 'package:budget/struct/settings.dart';
@@ -303,10 +304,11 @@ class NavigationSidebarState extends State<NavigationSidebar> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               SizedBox(height: 40),
-                              GoogleAccountLoginButton(
-                                navigationSidebarButton: true,
-                                isButtonSelected: selectedIndex == 8,
-                              ),
+                              if (cashewBackendEnabled)
+                                GoogleAccountLoginButton(
+                                  navigationSidebarButton: true,
+                                  isButtonSelected: selectedIndex == 8,
+                                ),
                               NavigationSidebarButtonWithNavBarIconData(
                                 navBarIconDataKey: "settings",
                                 currentPageIndex: selectedIndex,
@@ -315,7 +317,7 @@ class NavigationSidebarState extends State<NavigationSidebar> {
                                 navBarIconDataKey: "about",
                                 currentPageIndex: selectedIndex,
                               ),
-                              SyncButton(),
+                              if (cashewBackendEnabled) SyncButton(),
                               SizedBox(height: 10),
                               SizedBox(
                                   height:
