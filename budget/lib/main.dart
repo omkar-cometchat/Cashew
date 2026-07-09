@@ -56,8 +56,8 @@ void main() async {
     await loadLanguageNamesJSON();
     await initializeSettings();
     tz.initializeTimeZones();
-    final String? locationName = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(locationName ?? "America/New_York"));
+    final TimezoneInfo timezoneInfo = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
     iconObjects.sort((a, b) => (a.mostLikelyCategoryName ?? a.icon)
         .compareTo((b.mostLikelyCategoryName ?? b.icon)));
     setHighRefreshRate();

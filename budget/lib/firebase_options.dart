@@ -47,30 +47,30 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyBGiaRl72d4k3Ki0dh8ra-gU4v2z04CgIw',
-    appId: '1:267621253497:web:12558fe9abebf7fa842fa8',
-    messagingSenderId: '267621253497',
-    projectId: 'budget-app-flutter',
-    authDomain: 'budget-app-flutter.firebaseapp.com',
-    storageBucket: 'budget-app-flutter.appspot.com',
+    apiKey: 'AIzaSyB1YVOALYz6uugoxPKK50uD17Hm_b1XEpo',
+    appId: '1:870636838220:web:19629831b7821c13cc43e9',
+    messagingSenderId: '870636838220',
+    projectId: 'cashew-e7c3f',
+    authDomain: 'cashew-e7c3f.firebaseapp.com',
+    storageBucket: 'cashew-e7c3f.firebasestorage.app',
+    measurementId: 'G-YP25RDRV6D',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDNVDtwGJUHBZohwB2RDeUco-5hAGfx2bA',
-    appId: '1:267621253497:android:e7a2967eaf8dd072842fa8',
-    messagingSenderId: '267621253497',
-    projectId: 'budget-app-flutter',
-    storageBucket: 'budget-app-flutter.appspot.com',
+    apiKey: 'AIzaSyAQl7emal5kaAY4xWsSYInPQV_kag5VCgw',
+    appId: '1:870636838220:android:a57eb6aeea3750b1cc43e9',
+    messagingSenderId: '870636838220',
+    projectId: 'cashew-e7c3f',
+    storageBucket: 'cashew-e7c3f.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBts7THLrbIh-xReN70k5AsknAMwBNhrD0',
-    appId: '1:267621253497:ios:17af91fbac7c01b9842fa8',
-    messagingSenderId: '267621253497',
-    projectId: 'budget-app-flutter',
-    storageBucket: 'budget-app-flutter.appspot.com',
-    androidClientId: '267621253497-0h976snjlf34gs8m75bh8nik8gcvr2mk.apps.googleusercontent.com',
-    iosClientId: '267621253497-ih94g1srq37gun4mdmvadgl3ev588vpf.apps.googleusercontent.com',
-    iosBundleId: 'com.budget.tracker-app',
+    apiKey: 'AIzaSyDD3NlkzBPqs6DGiyDt9yU77j0h_3RXYJo',
+    appId: '1:870636838220:ios:d4e7151b3c61e40ecc43e9',
+    messagingSenderId: '870636838220',
+    projectId: 'cashew-e7c3f',
+    storageBucket: 'cashew-e7c3f.firebasestorage.app',
+    androidClientId: '870636838220-2ga2rdgbabl9imp3auu8mssgvpc395ku.apps.googleusercontent.com',
+    iosClientId: '870636838220-aitrs5mn9mkl7fv0728q5gpjr00c3img.apps.googleusercontent.com',
+    iosBundleId: 'com.budget.budget.RunnerTests',
   );
 }

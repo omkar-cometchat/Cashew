@@ -11,7 +11,7 @@ import 'package:budget/struct/syncClient.dart';
 import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/periodCyclePicker.dart';
 import 'package:budget/widgets/walletEntry.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' hide Constant, Expression;
 import 'dart:async';
 import 'package:async/async.dart';
 import 'package:drift/drift.dart';
@@ -7008,8 +7008,10 @@ class FinanceDatabase extends _$FinanceDatabase {
                     : objectives.income.equals(false)));
       mergedStreams.add(queryTotalObjectiveAmountOffset.map((row) {
         // print(row.rawData.data);
+        final double objectiveTotal =
+            (row.read(totalAmtObjective) ?? 0).toDouble();
         return TotalWithCount(
-            total: (row.read(totalAmtObjective) ?? 0).abs() *
+            total: objectiveTotal.abs() *
                 ((row.read(objectiveIncome) ?? true) ? -1 : 1) *
                 (amountRatioToPrimaryCurrency(allWallets, wallet.currency)),
             count: 0);
