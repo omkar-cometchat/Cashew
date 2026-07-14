@@ -1,0 +1,118 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentEmail() {
+      return request.auth.token.email;
+    }
+
+    function isBudgetOwner(budget) {
+      return signedIn() && budget.data.owner == request.auth.uid;
+    }
+
+    function isBudgetOwnerByEmail(budget) {
+      return signedIn()
+        && currentEmail() != null
+        && budget.data.ownerEmail == currentEmail();
+    }
+
+    function isBudgetMember(budget) {
+      return signedIn()
+        && currentEmail() != null
+        && currentEmail() in budget.data.members;
+    }
+
+    function canAccessBudget(budget) {
+      return isBudgetOwner(budget)
+        || isBudgetOwnerByEmail(budget)
+        || isBudgetMember(budget);
+    }
+
+    function inviteIsForCurrentUser() {
+      return signedIn()
+        && currentEmail() != null
+        && resource.data.invitedEmail == currentEmail();
+    }
+
+    function inviteCreateIsValid() {
+      let budget = get(
+        /databases/$(database)/documents/budgets/$(request.resource.data.budgetId)
+      );
+      return signedIn()
+        && isBudgetOwner(budget)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status == 'pending';
+    }
+
+    function inviteResponseIsValid() {
+      return inviteIsForCurrentUser()
+        && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'respondedAt'])
+        && request.resource.data.status in ['accepted', 'rejected'];
+    }
+
+    function canRespondToBudgetInvite() {
+      return signedIn()
+        && currentEmail() != null
+        && resource.data.pendingMembers is list
+        && currentEmail() in resource.data.pendingMembers
+        && !(currentEmail() in request.resource.data.pendingMembers)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members', 'pendingMembers', 'dateUpdated'])
+        && (
+          request.resource.data.members == resource.data.members
+          || currentEmail() in request.resource.data.members
+        );
+    }
+
+    match /feedback/{docId} {
+      allow create: if signedIn();
+      allow read, update, delete: if false;
+    }
+
+    match /sharedBudgetInvites/{inviteId} {
+      allow create: if inviteCreateIsValid();
+      allow read: if signedIn()
+        && (
+          inviteIsForCurrentUser()
+          || isBudgetOwner(
+            get(/databases/$(database)/documents/budgets/$(resource.data.budgetId))
+          )
+        );
+      allow update: if inviteResponseIsValid()
+        || (
+          signedIn()
+          && isBudgetOwner(
+            get(/databases/$(database)/documents/budgets/$(resource.data.budgetId))
+          )
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'respondedAt'])
+          && request.resource.data.status == 'cancelled'
+        );
+      allow delete: if signedIn()
+        && isBudgetOwner(
+          get(/databases/$(database)/documents/budgets/$(resource.data.budgetId))
+        );
+    }
+
+    match /budgets/{budgetId} {
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid;
+
+      allow read, delete: if canAccessBudget(resource);
+
+      allow update: if canAccessBudget(resource) || canRespondToBudgetInvite();
+
+      match /transactions/{transactionId} {
+        allow read, create, update, delete: if canAccessBudget(
+          get(/databases/$(database)/documents/budgets/$(budgetId))
+        );
+      }
+    }
+  }
+}

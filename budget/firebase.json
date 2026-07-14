@@ -1,1 +1,42 @@
-{"hosting":{"public":"build/web","predeploy":"flutter build web --release --web-renderer canvaskit --no-tree-shake-icons","site":"budget-track","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"flutter":{"platforms":{"android":{"default":{"projectId":"cashew-e7c3f","appId":"1:870636838220:android:a57eb6aeea3750b1cc43e9","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"cashew-e7c3f","configurations":{"android":"1:870636838220:android:a57eb6aeea3750b1cc43e9","ios":"1:870636838220:ios:d4e7151b3c61e40ecc43e9","web":"1:870636838220:web:19629831b7821c13cc43e9"}}}}}}
+{
+  "hosting": {
+    "public": "build/web",
+    "predeploy": "flutter build web --release --web-renderer canvaskit --no-tree-shake-icons",
+    "site": "budget-track",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "cashew-e7c3f",
+          "appId": "1:870636838220:android:a57eb6aeea3750b1cc43e9",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "cashew-e7c3f",
+          "configurations": {
+            "android": "1:870636838220:android:a57eb6aeea3750b1cc43e9",
+            "ios": "1:870636838220:ios:d4e7151b3c61e40ecc43e9",
+            "web": "1:870636838220:web:19629831b7821c13cc43e9"
+          }
+        }
+      }
+    }
+  }
+}

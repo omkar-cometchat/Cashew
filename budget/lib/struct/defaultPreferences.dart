@@ -175,7 +175,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "forceSmallHeader": false,
     "animationSpeed": 1.0,
     "logging": false,
-    "sharedBudgets": false,
+    "sharedBudgets": true,
     "emailScanning": false,
     "emailScanningPullToRefresh": false,
     "incognitoKeyboard": false,

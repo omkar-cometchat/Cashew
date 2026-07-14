@@ -23,10 +23,7 @@ import 'package:budget/struct/randomConstants.dart';
 import 'addButton.dart';
 
 class SharedBudgetSettings extends StatefulWidget {
-  SharedBudgetSettings({
-    Key? key,
-    required this.budget,
-  }) : super(key: key);
+  SharedBudgetSettings({Key? key, required this.budget}) : super(key: key);
 
   final Budget budget;
 
@@ -36,39 +33,63 @@ class SharedBudgetSettings extends StatefulWidget {
 
 class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
   List<String> members = [];
+  List<SharedBudgetInvite> pendingInvites = [];
   bool isLoaded = false;
   bool isErrored = false;
 
   @override
   void initState() {
     super.initState();
-    Future.delayed(Duration.zero, () async {
-      dynamic response =
-          await getMembersFromBudget(widget.budget.sharedKey!, widget.budget);
-      if (response == null) {
+    Future.delayed(Duration.zero, _loadSharingInfo);
+  }
+
+  Future<void> _loadSharingInfo() async {
+    try {
+      dynamic response = await getMembersFromBudget(
+        widget.budget.sharedKey!,
+        widget.budget,
+      );
+      final invites = widget.budget.sharedOwnerMember == SharedOwnerMember.owner
+          ? await getInvitesForSharedBudget(widget.budget.sharedKey!)
+          : <SharedBudgetInvite>[];
+      if (response == null || invites == null) {
         openSnackbar(SnackbarMessage(title: "Connection error"));
         setState(() {
           isErrored = true;
+          isLoaded = true;
         });
         return;
       } else if (response == false) {
         setState(() {
           members = [];
-          isLoaded = false;
+          pendingInvites = [];
+          isLoaded = true;
         });
         return;
       }
       print(FirebaseAuth.instance.currentUser!.email);
       print(widget.budget.sharedOwnerMember);
       setState(() {
-        members = response;
+        members = List<String>.from(response);
+        pendingInvites = invites;
+        isLoaded = true;
+        isErrored = false;
+      });
+    } catch (error) {
+      debugPrint("[SharedBudgets] manage sharing load failed: $error");
+      openSnackbar(SnackbarMessage(title: "Connection error"));
+      setState(() {
+        isErrored = true;
         isLoaded = true;
       });
-    });
+    }
   }
 
-  addMember(String member,
-      {bool updateEntry = false, String originalMember = ""}) async {
+  addMember(
+    String member, {
+    bool updateEntry = false,
+    String originalMember = "",
+  }) async {
     member = member.replaceAll(' ', '');
     if (members.contains(member)) {
       openSnackbar(
@@ -91,31 +112,44 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
           description: "Please ensure a valid email is entered.",
         ),
       );
+      return;
     }
     if (updateEntry) {
       await removeMemberFromBudget(
-          widget.budget.sharedKey!, originalMember, widget.budget);
-      await addMemberToBudget(widget.budget.sharedKey!, member, widget.budget);
+        widget.budget.sharedKey!,
+        originalMember,
+        widget.budget,
+      );
+      await inviteMemberToBudget(
+        widget.budget.sharedKey!,
+        member,
+        widget.budget,
+      );
       setState(() {
         int index = members.indexOf(originalMember);
         members.removeAt(index);
-        members.add(member);
       });
     } else {
-      await addMemberToBudget(widget.budget.sharedKey!, member, widget.budget);
-      setState(() {
-        members.add(member);
-      });
+      await inviteMemberToBudget(
+        widget.budget.sharedKey!,
+        member,
+        widget.budget,
+      );
     }
+    await _loadSharingInfo();
   }
 
   removeMember(String member) async {
     await removeMemberFromBudget(
-        widget.budget.sharedKey!, member, widget.budget);
+      widget.budget.sharedKey!,
+      member,
+      widget.budget,
+    );
     setState(() {
       int index = members.indexOf(member);
       members.removeAt(index);
     });
+    await _loadSharingInfo();
   }
 
   @override
@@ -130,7 +164,7 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
             padding: const EdgeInsetsDirectional.symmetric(horizontal: 20),
             child: TextFont(
               text: widget.budget.sharedOwnerMember == SharedOwnerMember.owner
-                  ? "Add Members"
+                  ? "Manage Sharing"
                   : "Members",
               textColor: getColor(context, "textLight"),
               fontSize: 16,
@@ -140,7 +174,9 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
           Padding(
             padding: const EdgeInsetsDirectional.symmetric(horizontal: 20),
             child: TextFont(
-              text: "Only group owners can edit members",
+              text: widget.budget.sharedOwnerMember == SharedOwnerMember.owner
+                  ? "Invite members and manage access"
+                  : "Only group owners can edit members",
               textColor: getColor(context, "textLight"),
               fontSize: 13,
               maxLines: 10,
@@ -195,10 +231,10 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
         SizedBox(height: 10),
         widget.budget.sharedOwnerMember == SharedOwnerMember.owner
             ? isLoaded
-                ? Row(
-                    children: [
-                      Expanded(
-                        child: AddButton(
+                  ? Row(
+                      children: [
+                        Expanded(
+                          child: AddButton(
                             margin: EdgeInsetsDirectional.only(
                               start: 15,
                               end: 15,
@@ -210,9 +246,10 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
                                 context,
                                 PopupFramework(
                                   title: "Add Member",
-                                  subtitle: "Enter the email of the member",
+                                  subtitle:
+                                      "Enter the email of the member to invite",
                                   child: SelectText(
-                                    buttonLabel: "Add Member",
+                                    buttonLabel: "Send Invite",
                                     setSelectedText: (_) {},
                                     placeholder: "example@example.com",
                                     nextWithInput: (text) async {
@@ -221,89 +258,107 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
                                   ),
                                 ),
                               );
-                            }),
-                      ),
-                    ],
-                  )
-                : Shimmer.fromColors(
-                    period: Duration(milliseconds: 1000),
-                    baseColor: appStateSettings["materialYou"]
-                        ? Theme.of(context).colorScheme.secondaryContainer
-                        : getColor(context, "lightDarkAccentHeavyLight"),
-                    highlightColor: appStateSettings["materialYou"]
-                        ? Theme.of(context)
-                            .colorScheme
-                            .secondaryContainer
-                            .withOpacity(0.2)
-                        : getColor(context, "lightDarkAccentHeavy")
-                            .withAlpha(20),
-                    child: Padding(
-                      padding:
-                          const EdgeInsetsDirectional.symmetric(horizontal: 15),
-                      child: Container(
-                        padding: EdgeInsetsDirectional.only(
-                          start: 15,
-                          end: 15,
-                          bottom: 9,
-                          top: 10,
-                        ),
-                        height: 52,
-                        margin: const EdgeInsetsDirectional.only(
-                            bottom: 8.0, top: 4.0),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadiusDirectional.circular(15),
-                          color: getColor(context, "lightDarkAccent")
-                              .withOpacity(0.5),
-                          border: Border.all(
-                            width: 1.5,
-                            color: getColor(context, "lightDarkAccentHeavy"),
+                            },
                           ),
                         ),
-                        child: Center(
-                          child: TextFont(
-                            text: "+",
-                            fontWeight: FontWeight.bold,
-                            textColor:
-                                getColor(context, "lightDarkAccentHeavy"),
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-            : SizedBox.shrink(),
-        !isLoaded
-            ? Column(
-                children: [
-                  for (int i = 0;
-                      i < (widget.budget.sharedMembers ?? []).length;
-                      i++)
-                    Shimmer.fromColors(
-                      period: Duration(
-                          milliseconds:
-                              (1000 + randomDouble[i % 10] * 520).toInt()),
+                      ],
+                    )
+                  : Shimmer.fromColors(
+                      period: Duration(milliseconds: 1000),
                       baseColor: appStateSettings["materialYou"]
                           ? Theme.of(context).colorScheme.secondaryContainer
                           : getColor(context, "lightDarkAccentHeavyLight"),
                       highlightColor: appStateSettings["materialYou"]
-                          ? Theme.of(context)
-                              .colorScheme
-                              .secondaryContainer
-                              .withOpacity(0.2)
-                          : getColor(context, "lightDarkAccentHeavy")
-                              .withAlpha(20),
+                          ? Theme.of(
+                              context,
+                            ).colorScheme.secondaryContainer.withOpacity(0.2)
+                          : getColor(
+                              context,
+                              "lightDarkAccentHeavy",
+                            ).withAlpha(20),
                       child: Padding(
                         padding: const EdgeInsetsDirectional.symmetric(
-                            horizontal: 15),
+                          horizontal: 15,
+                        ),
+                        child: Container(
+                          padding: EdgeInsetsDirectional.only(
+                            start: 15,
+                            end: 15,
+                            bottom: 9,
+                            top: 10,
+                          ),
+                          height: 52,
+                          margin: const EdgeInsetsDirectional.only(
+                            bottom: 8.0,
+                            top: 4.0,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadiusDirectional.circular(15),
+                            color: getColor(
+                              context,
+                              "lightDarkAccent",
+                            ).withOpacity(0.5),
+                            border: Border.all(
+                              width: 1.5,
+                              color: getColor(context, "lightDarkAccentHeavy"),
+                            ),
+                          ),
+                          child: Center(
+                            child: TextFont(
+                              text: "+",
+                              fontWeight: FontWeight.bold,
+                              textColor: getColor(
+                                context,
+                                "lightDarkAccentHeavy",
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+            : SizedBox.shrink(),
+        !isLoaded
+            ? Column(
+                children: [
+                  for (
+                    int i = 0;
+                    i < (widget.budget.sharedMembers ?? []).length;
+                    i++
+                  )
+                    Shimmer.fromColors(
+                      period: Duration(
+                        milliseconds: (1000 + randomDouble[i % 10] * 520)
+                            .toInt(),
+                      ),
+                      baseColor: appStateSettings["materialYou"]
+                          ? Theme.of(context).colorScheme.secondaryContainer
+                          : getColor(context, "lightDarkAccentHeavyLight"),
+                      highlightColor: appStateSettings["materialYou"]
+                          ? Theme.of(
+                              context,
+                            ).colorScheme.secondaryContainer.withOpacity(0.2)
+                          : getColor(
+                              context,
+                              "lightDarkAccentHeavy",
+                            ).withAlpha(20),
+                      child: Padding(
+                        padding: const EdgeInsetsDirectional.symmetric(
+                          horizontal: 15,
+                        ),
                         child: Container(
                           width: double.infinity,
                           height: 70,
                           margin: const EdgeInsetsDirectional.only(bottom: 8.0),
                           padding: const EdgeInsetsDirectional.symmetric(
-                              horizontal: 25, vertical: 15),
+                            horizontal: 25,
+                            vertical: 15,
+                          ),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadiusDirectional.circular(15),
-                            color: getColor(context, "lightDarkAccent")
-                                .withOpacity(0.5),
+                            color: getColor(
+                              context,
+                              "lightDarkAccent",
+                            ).withOpacity(0.5),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -312,7 +367,8 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
                               Container(
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadiusDirectional.all(
-                                      Radius.circular(5)),
+                                    Radius.circular(5),
+                                  ),
                                   color: Colors.white,
                                 ),
                                 height: 15,
@@ -321,7 +377,8 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
                               Container(
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadiusDirectional.all(
-                                      Radius.circular(5)),
+                                    Radius.circular(5),
+                                  ),
                                   color: Colors.white,
                                 ),
                                 height: 17,
@@ -331,40 +388,78 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
                           ),
                         ),
                       ),
-                    )
+                    ),
                 ],
               )
             : Column(
                 children: [
-                  Padding(
-                    padding:
-                        const EdgeInsetsDirectional.symmetric(horizontal: 15),
-                    child: CategoryMemberContainer(
-                      member: members[0],
-                      setMember: (_) {},
-                      onDelete: () {},
-                      canModify: false,
-                      isOwner: true,
-                      isYou: members[0] == appStateSettings["currentUserEmail"],
+                  if (members.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.symmetric(
+                        horizontal: 15,
+                      ),
+                      child: CategoryMemberContainer(
+                        member: members[0],
+                        setMember: (_) {},
+                        onDelete: () {},
+                        canModify: false,
+                        isOwner: true,
+                        isYou:
+                            members[0] == appStateSettings["currentUserEmail"],
+                      ),
                     ),
-                  ),
                   for (String member in members.sublist(1))
                     Padding(
-                      padding:
-                          const EdgeInsetsDirectional.symmetric(horizontal: 15),
+                      padding: const EdgeInsetsDirectional.symmetric(
+                        horizontal: 15,
+                      ),
                       child: CategoryMemberContainer(
                         member: member,
                         setMember: (text) async {
-                          addMember(text,
-                              updateEntry: true, originalMember: member);
+                          addMember(
+                            text,
+                            updateEntry: true,
+                            originalMember: member,
+                          );
                         },
                         onDelete: () {
                           removeMember(member);
                         },
-                        canModify: widget.budget.sharedOwnerMember ==
+                        canModify:
+                            widget.budget.sharedOwnerMember ==
                             SharedOwnerMember.owner,
                         isOwner: false, //only the first entry is the owner
                         isYou: member == appStateSettings["currentUserEmail"],
+                      ),
+                    ),
+                  if (pendingInvites.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(
+                        start: 20,
+                        end: 20,
+                        top: 8,
+                        bottom: 10,
+                      ),
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextFont(
+                          text: "Pending Invites",
+                          textColor: getColor(context, "textLight"),
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  for (SharedBudgetInvite invite in pendingInvites)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.symmetric(
+                        horizontal: 15,
+                      ),
+                      child: PendingInviteContainer(
+                        invite: invite,
+                        onCancel: () async {
+                          await cancelSharedBudgetInvite(invite);
+                          await _loadSharingInfo();
+                        },
                       ),
                     ),
                 ],
@@ -395,8 +490,9 @@ class _SharedBudgetSettingsState extends State<SharedBudgetSettings> {
                       onSubmit: () async {
                         popRoute(context);
                         openLoadingPopup(context);
-                        bool status =
-                            await removedSharedFromBudget(widget.budget);
+                        bool status = await removedSharedFromBudget(
+                          widget.budget,
+                        );
                         if (status == false) {
                           openSnackbar(
                             SnackbarMessage(
@@ -537,8 +633,12 @@ class CategoryMemberContainer extends StatelessWidget {
                         Map<dynamic, dynamic> nicknames =
                             appStateSettings["usersNicknames"];
                         nicknames[member] = text;
-                        updateSettings("usersNicknames", nicknames,
-                            pagesNeedingRefresh: [], updateGlobalState: false);
+                        updateSettings(
+                          "usersNicknames",
+                          nicknames,
+                          pagesNeedingRefresh: [],
+                          updateGlobalState: false,
+                        );
                       },
                       selectedText:
                           appStateSettings["usersNicknames"][member] ?? "",
@@ -559,33 +659,33 @@ class CategoryMemberContainer extends StatelessWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsetsDirectional.symmetric(
-                    horizontal: 25, vertical: 15),
+                  horizontal: 25,
+                  vertical: 15,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     TextFont(
                       text: isOwner
                           ? isYou
-                              ? getMemberNickname(member) == member
-                                  ? "Owner (You)"
-                                  : getMemberNickname(member) + " (Owner - You)"
-                              : getMemberNickname(member) == member
-                                  ? "Owner"
-                                  : getMemberNickname(member) + " (Owner)"
+                                ? getMemberNickname(member) == member
+                                      ? "Owner (You)"
+                                      : getMemberNickname(member) +
+                                            " (Owner - You)"
+                                : getMemberNickname(member) == member
+                                ? "Owner"
+                                : getMemberNickname(member) + " (Owner)"
                           : isYou
-                              ? getMemberNickname(member) != "Me"
-                                  ? getMemberNickname(member) + " (Member - Me)"
-                                  : "Me (Member)"
-                              : getMemberNickname(member) == member
-                                  ? "Member"
-                                  : getMemberNickname(member) + " (Member)",
+                          ? getMemberNickname(member) != "Me"
+                                ? getMemberNickname(member) + " (Member - Me)"
+                                : "Me (Member)"
+                          : getMemberNickname(member) == member
+                          ? "Member"
+                          : getMemberNickname(member) + " (Member)",
                       fontSize: 15,
                       textColor: Theme.of(context).colorScheme.secondary,
                     ),
-                    TextFont(
-                      text: member,
-                      fontSize: 16,
-                    ),
+                    TextFont(text: member, fontSize: 16),
                   ],
                 ),
               ),
@@ -633,6 +733,87 @@ class CategoryMemberContainer extends StatelessWidget {
   }
 }
 
+class PendingInviteContainer extends StatelessWidget {
+  const PendingInviteContainer({
+    Key? key,
+    required this.invite,
+    required this.onCancel,
+  }) : super(key: key);
+
+  final SharedBudgetInvite invite;
+  final Future<void> Function() onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(bottom: 8.0),
+      child: Tappable(
+        onTap: () {},
+        borderRadius: 15,
+        color: getColor(context, "lightDarkAccent"),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsetsDirectional.symmetric(
+                  horizontal: 25,
+                  vertical: 15,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextFont(
+                      text: "Pending",
+                      fontSize: 15,
+                      textColor: Theme.of(context).colorScheme.secondary,
+                    ),
+                    TextFont(text: invite.invitedEmail, fontSize: 16),
+                  ],
+                ),
+              ),
+            ),
+            Tappable(
+              onTap: () async {
+                await openPopup(
+                  context,
+                  title: "Cancel Invite?",
+                  description:
+                      "This person will no longer be able to accept this shared budget invite.",
+                  icon: appStateSettings["outlinedIcons"]
+                      ? Icons.close_outlined
+                      : Icons.close_rounded,
+                  onSubmitLabel: "Cancel Invite",
+                  onSubmit: () async {
+                    popRoute(context);
+                    await onCancel();
+                  },
+                  onCancelLabel: "back".tr(),
+                  onCancel: () {
+                    popRoute(context);
+                  },
+                );
+              },
+              borderRadius: 15,
+              color: getColor(context, "lightDarkAccent"),
+              child: Padding(
+                padding: const EdgeInsetsDirectional.all(14),
+                child: Icon(
+                  appStateSettings["outlinedIcons"]
+                      ? Icons.close_outlined
+                      : Icons.close_rounded,
+                  size: 25,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 memberPopup(context, String member) {
   openBottomSheet(
     context,
@@ -665,8 +846,12 @@ memberPopup(context, String member) {
               Map<dynamic, dynamic> nicknames =
                   appStateSettings["usersNicknames"];
               nicknames[member] = text;
-              updateSettings("usersNicknames", nicknames,
-                  pagesNeedingRefresh: [], updateGlobalState: false);
+              updateSettings(
+                "usersNicknames",
+                nicknames,
+                pagesNeedingRefresh: [],
+                updateGlobalState: false,
+              );
             },
             selectedText: appStateSettings["usersNicknames"][member] ?? "",
             placeholder: "Nickname",

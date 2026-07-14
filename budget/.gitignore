@@ -62,3 +62,6 @@ keystore.jks
 # Local backend experiments
 backend/.env
 backend/node_modules/
+
+# Local app secrets
+assets/secrets/cometchat_local.json

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:budget/cometchat/cashew_cometchat_service.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
@@ -15,6 +16,69 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:budget/struct/firebaseAuthGlobal.dart';
+
+const String sharedBudgetInvitesCollection = "sharedBudgetInvites";
+
+String normalizeSharedBudgetEmail(String email) {
+  return email.trim().toLowerCase();
+}
+
+DateTime? _dateTimeFromFirestore(dynamic value) {
+  if (value == null) return null;
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  return DateTime.tryParse(value.toString());
+}
+
+class SharedBudgetInvite {
+  SharedBudgetInvite({
+    required this.inviteId,
+    required this.budgetId,
+    required this.budgetName,
+    required this.ownerUid,
+    required this.ownerEmail,
+    required this.invitedEmail,
+    required this.status,
+    required this.createdAt,
+    this.respondedAt,
+  });
+
+  final String inviteId;
+  final String budgetId;
+  final String budgetName;
+  final String ownerUid;
+  final String ownerEmail;
+  final String invitedEmail;
+  final String status;
+  final DateTime createdAt;
+  final DateTime? respondedAt;
+
+  bool get isPending => status == "pending";
+
+  factory SharedBudgetInvite.fromSnapshot(DocumentSnapshot snapshot) {
+    final data = (snapshot.data() as Map<dynamic, dynamic>?) ?? {};
+    return SharedBudgetInvite(
+      inviteId: snapshot.id,
+      budgetId: (data["budgetId"] ?? "").toString(),
+      budgetName: (data["budgetName"] ?? "Shared Budget").toString(),
+      ownerUid: (data["ownerUid"] ?? "").toString(),
+      ownerEmail: (data["ownerEmail"] ?? "").toString(),
+      invitedEmail: normalizeSharedBudgetEmail(
+        (data["invitedEmail"] ?? "").toString(),
+      ),
+      status: (data["status"] ?? "pending").toString(),
+      createdAt: _dateTimeFromFirestore(data["createdAt"]) ?? DateTime.now(),
+      respondedAt: _dateTimeFromFirestore(data["respondedAt"]),
+    );
+  }
+}
+
+String _inviteDocumentId(String sharedKey, String memberEmail) {
+  final safeEmail = normalizeSharedBudgetEmail(
+    memberEmail,
+  ).replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+  return "${sharedKey}_$safeEmail";
+}
 
 Future<bool> shareBudget(Budget? budgetToShare, context) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
@@ -38,37 +102,48 @@ Future<bool> shareBudget(Budget? budgetToShare, context) async {
     "periodLength": budgetToShare.periodLength,
     "reoccurrence": enumRecurrence[budgetToShare.reoccurrence],
     "members": [
-      // FirebaseAuth.instance.currentUser!.email
+      normalizeSharedBudgetEmail(FirebaseAuth.instance.currentUser!.email ?? ""),
     ],
+    "pendingMembers": [],
     "dateShared": DateTime.now(),
     "owner": FirebaseAuth.instance.currentUser!.uid,
-    "ownerEmail": FirebaseAuth.instance.currentUser!.email,
+    "ownerEmail": normalizeSharedBudgetEmail(
+      FirebaseAuth.instance.currentUser!.email ?? "",
+    ),
     "dateUpdated": DateTime.now(),
   };
 
-  DocumentReference budgetCreatedOnCloud =
-      await db.collection("budgets").add(budgetEntry);
+  DocumentReference budgetCreatedOnCloud = await db
+      .collection("budgets")
+      .add(budgetEntry);
 
-  await database.createOrUpdateBudget(
-    budgetToShare.copyWith(
-      sharedKey: Value(budgetCreatedOnCloud.id),
-      sharedOwnerMember: Value(SharedOwnerMember.owner),
-      sharedDateUpdated: Value(DateTime.now()),
-      sharedMembers: Value([FirebaseAuth.instance.currentUser!.email!]),
-      categoryFks: Value(null),
-      budgetTransactionFilters: Value(null),
-      memberTransactionFilters: Value(null),
-    ),
-    updateSharedEntry: false,
+  final sharedBudget = budgetToShare.copyWith(
+    sharedKey: Value(budgetCreatedOnCloud.id),
+    sharedOwnerMember: Value(SharedOwnerMember.owner),
+    sharedDateUpdated: Value(DateTime.now()),
+    sharedMembers: Value([
+      normalizeSharedBudgetEmail(FirebaseAuth.instance.currentUser!.email ?? ""),
+    ]),
+    sharedAllMembersEver: Value([
+      normalizeSharedBudgetEmail(FirebaseAuth.instance.currentUser!.email ?? ""),
+    ]),
+    categoryFks: Value(null),
+    budgetTransactionFilters: Value(null),
+    memberTransactionFilters: Value(null),
   );
+
+  await database.createOrUpdateBudget(sharedBudget, updateSharedEntry: false);
+  unawaited(_ensureCometChatSharedBudget(sharedBudget));
 
   openSnackbar(SnackbarMessage(title: "Shared Budget"));
   loadingProgressKey.currentState?.setProgressPercentage(0);
   return true;
 }
 
-Future<bool> removedSharedFromBudget(Budget sharedBudget,
-    {bool removeFromServer = true}) async {
+Future<bool> removedSharedFromBudget(
+  Budget sharedBudget, {
+  bool removeFromServer = true,
+}) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
   if (removeFromServer)
     try {
@@ -76,22 +151,31 @@ Future<bool> removedSharedFromBudget(Budget sharedBudget,
       if (db == null) {
         return false;
       }
-      DocumentReference collectionRef =
-          db.collection('budgets').doc(sharedBudget.sharedKey);
+      unawaited(_deleteCometChatSharedBudget(sharedBudget.sharedKey));
+      DocumentReference collectionRef = db
+          .collection('budgets')
+          .doc(sharedBudget.sharedKey);
       CollectionReference transactionSubCollection = db
           .collection('budgets')
           .doc(sharedBudget.sharedKey)
           .collection("transactions");
 
       WriteBatch batch = db.batch();
-      final QuerySnapshot transactionsOnCloud =
-          await transactionSubCollection.get();
+      final QuerySnapshot transactionsOnCloud = await transactionSubCollection
+          .get();
       // print(transactionsOnCloud);
       for (DocumentSnapshot transaction in transactionsOnCloud.docs) {
         print(transaction);
-        DocumentReference transactionSubCollectionDoc =
-            transactionSubCollection.doc(transaction.id);
+        DocumentReference transactionSubCollectionDoc = transactionSubCollection
+            .doc(transaction.id);
         batch.delete(transactionSubCollectionDoc);
+      }
+      final QuerySnapshot pendingInvites = await db
+          .collection(sharedBudgetInvitesCollection)
+          .where("budgetId", isEqualTo: sharedBudget.sharedKey)
+          .get();
+      for (DocumentSnapshot invite in pendingInvites.docs) {
+        batch.delete(invite.reference);
       }
       await batch.commit();
       await collectionRef.delete();
@@ -103,11 +187,13 @@ Future<bool> removedSharedFromBudget(Budget sharedBudget,
       .getAllTransactionsBelongingToSharedBudget(sharedBudget.budgetPk);
   List<Transaction> allTransactionsToUpdate = [];
   for (Transaction transactionFromBudget in transactionsFromBudget) {
-    allTransactionsToUpdate.add(transactionFromBudget.copyWith(
-      sharedKey: Value(null),
-      sharedDateUpdated: Value(null),
-      sharedStatus: Value(null),
-    ));
+    allTransactionsToUpdate.add(
+      transactionFromBudget.copyWith(
+        sharedKey: Value(null),
+        sharedDateUpdated: Value(null),
+        sharedStatus: Value(null),
+      ),
+    );
   }
   await database.updateBatchTransactionsOnly(allTransactionsToUpdate);
   await database.createOrUpdateBudget(
@@ -116,6 +202,7 @@ Future<bool> removedSharedFromBudget(Budget sharedBudget,
       sharedKey: Value(null),
       sharedOwnerMember: Value(null),
       sharedMembers: Value(null),
+      sharedAllMembersEver: Value(null),
       budgetTransactionFilters: Value(null),
       memberTransactionFilters: Value(null),
     ),
@@ -130,64 +217,356 @@ Future<bool> leaveSharedBudget(Budget sharedBudget) async {
   if (db == null) {
     return false;
   }
-  removeMemberFromBudget(sharedBudget.sharedKey!,
-      FirebaseAuth.instance.currentUser!.email!, sharedBudget);
-  removedSharedFromBudget(sharedBudget, removeFromServer: false);
-  return true;
-}
-
-Future<bool> addMemberToBudget(
-    String sharedKey, String member, Budget budget) async {
-  FirebaseFirestore? db = await firebaseGetDBInstance();
-  if (db == null) {
-    return false;
+  final currentEmail = FirebaseAuth.instance.currentUser!.email;
+  if (currentEmail != null && currentEmail.trim().isNotEmpty) {
+    final normalizedCurrentEmail = normalizeSharedBudgetEmail(currentEmail);
+    await db.collection('budgets').doc(sharedBudget.sharedKey).update({
+      "members": FieldValue.arrayRemove([
+        normalizedCurrentEmail,
+        currentEmail,
+      ]),
+      "dateUpdated": DateTime.now(),
+    });
   }
-  DocumentReference budgetCreatedOnCloud =
-      db.collection('budgets').doc(sharedKey);
-  budgetCreatedOnCloud.update({
-    "members": FieldValue.arrayUnion([member]),
-    "dateUpdated": DateTime.now(),
-  });
-  Budget budgetFromDB = await database.getBudgetInstance(budget.budgetPk);
-  List<String> memberList = budgetFromDB.sharedMembers ?? [];
-  memberList.add(member);
-  Set<String> allMembersEver =
-      (budgetFromDB.sharedAllMembersEver ?? []).toSet();
-  allMembersEver.add(member);
-  await database.createOrUpdateBudget(
-    budgetFromDB.copyWith(
-      sharedMembers: Value(memberList),
-      sharedAllMembersEver: Value(
-        allMembersEver.toList(),
-      ),
-    ),
-    updateSharedEntry: false,
-  );
+  unawaited(_leaveCometChatSharedBudget(sharedBudget.sharedKey));
+  await removedSharedFromBudget(sharedBudget, removeFromServer: false);
   return true;
 }
 
-Future<bool> removeMemberFromBudget(
-    String sharedKey, String member, Budget budget) async {
+Future<bool> inviteMemberToBudget(
+  String sharedKey,
+  String member,
+  Budget budget,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
   FirebaseFirestore? db = await firebaseGetDBInstance();
   if (db == null) {
     return false;
   }
-  DocumentReference budgetCreatedOnCloud =
-      db.collection('budgets').doc(sharedKey);
+  final normalizedMember = normalizeSharedBudgetEmail(member);
+  if (normalizedMember.isEmpty) return false;
+
+  final budgetFromDB = await database.getBudgetInstance(budget.budgetPk);
+  if ((budgetFromDB.sharedMembers ?? [])
+      .map(normalizeSharedBudgetEmail)
+      .contains(normalizedMember)) {
+    return false;
+  }
+
+  final currentUser = FirebaseAuth.instance.currentUser;
+  if (currentUser == null) return false;
+
+  final inviteRef = db
+      .collection(sharedBudgetInvitesCollection)
+      .doc(_inviteDocumentId(sharedKey, normalizedMember));
+  await inviteRef.set({
+    "budgetId": sharedKey,
+    "budgetName": budgetFromDB.name,
+    "ownerUid": currentUser.uid,
+    "ownerEmail": normalizeSharedBudgetEmail(currentUser.email ?? ""),
+    "invitedEmail": normalizedMember,
+    "status": "pending",
+    "createdAt": DateTime.now(),
+    "respondedAt": null,
+  }, SetOptions(merge: true));
+
+  await db.collection('budgets').doc(sharedKey).update({
+    "pendingMembers": FieldValue.arrayUnion([normalizedMember]),
+    "dateUpdated": DateTime.now(),
+  });
+  return true;
+}
+
+Future<bool> addMemberToBudget(
+  String sharedKey,
+  String member,
+  Budget budget, {
+  bool syncCometChat = true,
+}) async {
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) {
+    return false;
+  }
+  member = normalizeSharedBudgetEmail(member);
+  DocumentReference budgetCreatedOnCloud = db
+      .collection('budgets')
+      .doc(sharedKey);
+  budgetCreatedOnCloud.update({
+    "members": FieldValue.arrayUnion([member]),
+    "pendingMembers": FieldValue.arrayRemove([member]),
+    "dateUpdated": DateTime.now(),
+  });
+  Budget budgetFromDB = await database.getBudgetInstance(budget.budgetPk);
+  Set<String> memberList = (budgetFromDB.sharedMembers ?? [])
+      .map(normalizeSharedBudgetEmail)
+      .toSet();
+  memberList.add(member);
+  Set<String> allMembersEver = (budgetFromDB.sharedAllMembersEver ?? [])
+      .map(normalizeSharedBudgetEmail)
+      .toSet();
+  allMembersEver.add(member);
+  final updatedBudget = budgetFromDB.copyWith(
+    sharedMembers: Value(memberList.toList()),
+    sharedAllMembersEver: Value(allMembersEver.toList()),
+  );
+  await database.createOrUpdateBudget(updatedBudget, updateSharedEntry: false);
+  if (syncCometChat) {
+    unawaited(
+      _addCometChatSharedBudgetMember(
+        sharedKey: sharedKey,
+        member: member,
+        budget: updatedBudget,
+      ),
+    );
+  }
+  return true;
+}
+
+Future<void> _ensureCometChatSharedBudget(Budget budget) async {
+  try {
+    await CashewCometChatService.instance.ensureSharedBudgetChat(budget);
+  } catch (error) {
+    debugPrint('CometChat shared budget setup skipped: $error');
+  }
+}
+
+Future<void> _addCometChatSharedBudgetMember({
+  required String sharedKey,
+  required String member,
+  required Budget budget,
+}) async {
+  try {
+    await CashewCometChatService.instance.addMemberToSharedBudgetChat(
+      sharedKey: sharedKey,
+      memberEmail: member,
+      budget: budget,
+    );
+  } catch (error) {
+    debugPrint('CometChat shared budget member setup skipped: $error');
+  }
+}
+
+Future<void> _removeCometChatSharedBudgetMember({
+  required String sharedKey,
+  required String member,
+}) async {
+  try {
+    await CashewCometChatService.instance.removeMemberFromSharedBudgetChat(
+      sharedKey: sharedKey,
+      memberEmail: member,
+    );
+  } catch (error) {
+    debugPrint('CometChat shared budget member removal skipped: $error');
+  }
+}
+
+Future<void> _leaveCometChatSharedBudget(String? sharedKey) async {
+  if (sharedKey == null || sharedKey.trim().isEmpty) return;
+  try {
+    await CashewCometChatService.instance.leaveSharedBudgetChat(sharedKey);
+  } catch (error) {
+    debugPrint('CometChat shared budget leave skipped: $error');
+  }
+}
+
+Future<void> _deleteCometChatSharedBudget(String? sharedKey) async {
+  if (sharedKey == null || sharedKey.trim().isEmpty) return;
+  try {
+    await CashewCometChatService.instance.deleteSharedBudgetChat(sharedKey);
+  } catch (error) {
+    debugPrint('CometChat shared budget delete skipped: $error');
+  }
+}
+
+Future<bool> removeMemberFromBudget(
+  String sharedKey,
+  String member,
+  Budget budget,
+) async {
+  if (appStateSettings["sharedBudgets"] == false) return false;
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) {
+    return false;
+  }
+  member = normalizeSharedBudgetEmail(member);
+  DocumentReference budgetCreatedOnCloud = db
+      .collection('budgets')
+      .doc(sharedKey);
   budgetCreatedOnCloud.update({
     "members": FieldValue.arrayRemove([member]),
     "dateUpdated": DateTime.now(),
   });
   Budget budgetFromDB = await database.getBudgetInstance(budget.budgetPk);
-  List<String> memberList = budgetFromDB.sharedMembers ?? [];
+  List<String> memberList = (budgetFromDB.sharedMembers ?? [])
+      .map(normalizeSharedBudgetEmail)
+      .toList();
   memberList.remove(member);
   await database.createOrUpdateBudget(
-    budgetFromDB.copyWith(
-      sharedMembers: Value(memberList),
-    ),
+    budgetFromDB.copyWith(sharedMembers: Value(memberList)),
     updateSharedEntry: false,
   );
+  unawaited(
+    _removeCometChatSharedBudgetMember(sharedKey: sharedKey, member: member),
+  );
+  return true;
+}
+
+Future<List<SharedBudgetInvite>?> getPendingSharedBudgetInvites() async {
+  if (appStateSettings["sharedBudgets"] == false) return [];
+  if (appStateSettings["hasSignedIn"] == false) return [];
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) return null;
+  final currentEmail = FirebaseAuth.instance.currentUser?.email;
+  if (currentEmail == null || currentEmail.trim().isEmpty) return [];
+
+  try {
+    final snapshot = await db
+        .collection(sharedBudgetInvitesCollection)
+        .where(
+          "invitedEmail",
+          isEqualTo: normalizeSharedBudgetEmail(currentEmail),
+        )
+        .where("status", isEqualTo: "pending")
+        .get()
+        .timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            throw TimeoutException("Pending invites query timed out");
+          },
+        );
+    debugPrint(
+      "[SharedBudgets] pending invites returned ${snapshot.docs.length}",
+    );
+    final invites = snapshot.docs
+        .map((snapshot) => SharedBudgetInvite.fromSnapshot(snapshot))
+        .toList();
+    invites.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return invites;
+  } on FirebaseException catch (error) {
+    debugPrint(
+      "[SharedBudgets] pending invites failed: ${error.code} ${error.message}",
+    );
+    return [];
+  } catch (error) {
+    debugPrint("[SharedBudgets] pending invites failed: $error");
+    return [];
+  }
+}
+
+Future<int> getPendingSharedBudgetInvitesCount() async {
+  final invites = await getPendingSharedBudgetInvites();
+  return invites?.length ?? 0;
+}
+
+Future<List<SharedBudgetInvite>?> getInvitesForSharedBudget(
+  String sharedKey,
+) async {
+  if (appStateSettings["hasSignedIn"] == false) return [];
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) return null;
+
+  try {
+    final snapshot = await db
+        .collection(sharedBudgetInvitesCollection)
+        .where("budgetId", isEqualTo: sharedKey)
+        .where("status", isEqualTo: "pending")
+        .get()
+        .timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            throw TimeoutException("Shared budget invite query timed out");
+          },
+        );
+    debugPrint(
+      "[SharedBudgets] pending invites for $sharedKey returned "
+      "${snapshot.docs.length}",
+    );
+    final invites = snapshot.docs
+        .map((snapshot) => SharedBudgetInvite.fromSnapshot(snapshot))
+        .toList();
+    invites.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return invites;
+  } on FirebaseException catch (error) {
+    debugPrint(
+      "[SharedBudgets] pending invites for $sharedKey failed: "
+      "${error.code} ${error.message}",
+    );
+    return [];
+  } catch (error) {
+    debugPrint("[SharedBudgets] pending invites for $sharedKey failed: $error");
+    return [];
+  }
+}
+
+Future<bool> cancelSharedBudgetInvite(SharedBudgetInvite invite) async {
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) return false;
+
+  await db
+      .collection(sharedBudgetInvitesCollection)
+      .doc(invite.inviteId)
+      .update({"status": "cancelled", "respondedAt": DateTime.now()});
+  await db.collection('budgets').doc(invite.budgetId).update({
+    "pendingMembers": FieldValue.arrayRemove([invite.invitedEmail]),
+    "dateUpdated": DateTime.now(),
+  });
+  return true;
+}
+
+Future<bool> acceptSharedBudgetInvite(SharedBudgetInvite invite) async {
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) return false;
+
+  final inviteRef = db
+      .collection(sharedBudgetInvitesCollection)
+      .doc(invite.inviteId);
+  final budgetRef = db.collection('budgets').doc(invite.budgetId);
+
+  await db.runTransaction((transaction) async {
+    final inviteSnapshot = await transaction.get(inviteRef);
+    final inviteData = inviteSnapshot.data() as Map<dynamic, dynamic>?;
+    if (inviteData == null || inviteData["status"] != "pending") {
+      throw StateError("Invite is no longer pending.");
+    }
+    transaction.update(inviteRef, {
+      "status": "accepted",
+      "respondedAt": DateTime.now(),
+    });
+    transaction.update(budgetRef, {
+      "members": FieldValue.arrayUnion([invite.invitedEmail]),
+      "pendingMembers": FieldValue.arrayRemove([invite.invitedEmail]),
+      "dateUpdated": DateTime.now(),
+    });
+  });
+
+  await getCloudBudgets();
+  try {
+    final budget = await database.getSharedBudget(invite.budgetId);
+    unawaited(
+      _addCometChatSharedBudgetMember(
+        sharedKey: invite.budgetId,
+        member: invite.invitedEmail,
+        budget: budget,
+      ),
+    );
+  } catch (error) {
+    debugPrint('CometChat accept invite sync skipped: $error');
+  }
+  return true;
+}
+
+Future<bool> rejectSharedBudgetInvite(SharedBudgetInvite invite) async {
+  FirebaseFirestore? db = await firebaseGetDBInstance();
+  if (db == null) return false;
+
+  await db
+      .collection(sharedBudgetInvitesCollection)
+      .doc(invite.inviteId)
+      .update({"status": "rejected", "respondedAt": DateTime.now()});
+  await db.collection('budgets').doc(invite.budgetId).update({
+    "pendingMembers": FieldValue.arrayRemove([invite.invitedEmail]),
+    "dateUpdated": DateTime.now(),
+  });
   return true;
 }
 
@@ -198,27 +577,52 @@ Future<dynamic> getMembersFromBudget(String sharedKey, Budget budget) async {
   if (db == null) {
     return null;
   }
-  DocumentReference budgetCreatedOnCloud =
-      db.collection('budgets').doc(sharedKey);
-  Map<dynamic, dynamic> budgetDecoded =
-      (await budgetCreatedOnCloud.get()).data() as Map;
+  DocumentReference budgetCreatedOnCloud = db
+      .collection('budgets')
+      .doc(sharedKey);
+  DocumentSnapshot budgetSnapshot;
+  try {
+    budgetSnapshot = await budgetCreatedOnCloud.get().timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        throw TimeoutException("Shared budget members query timed out");
+      },
+    );
+  } on FirebaseException catch (error) {
+    debugPrint(
+      "[SharedBudgets] members for $sharedKey failed: "
+      "${error.code} ${error.message}",
+    );
+    return null;
+  } catch (error) {
+    debugPrint("[SharedBudgets] members for $sharedKey failed: $error");
+    return null;
+  }
+  final budgetData = budgetSnapshot.data();
+  if (budgetData == null) {
+    debugPrint("[SharedBudgets] members for $sharedKey: budget not found");
+    return [];
+  }
+  Map<dynamic, dynamic> budgetDecoded = budgetData as Map;
   print([
     budgetDecoded["ownerEmail"].toString(),
-    ...List<String>.from(budgetDecoded["members"])
+    ...List<String>.from(budgetDecoded["members"]),
   ]);
   List<String> memberList = [
     budgetDecoded["ownerEmail"].toString(),
-    ...List<String>.from(budgetDecoded["members"])
+    ...List<String>.from(budgetDecoded["members"]),
   ];
-  await database.createOrUpdateBudget(
-    budget.copyWith(sharedMembers: Value(memberList)),
-    updateSharedEntry: false,
-  );
+  final updatedBudget = budget.copyWith(sharedMembers: Value(memberList));
+  await database.createOrUpdateBudget(updatedBudget, updateSharedEntry: false);
+  if (updatedBudget.sharedOwnerMember == SharedOwnerMember.owner) {
+    unawaited(_ensureCometChatSharedBudget(updatedBudget));
+  }
   return memberList;
 }
 
 Future<bool> compareSharedToCurrentBudgets(
-    List<QueryDocumentSnapshot<Object?>> budgetSnapshot) async {
+  List<DocumentSnapshot> budgetSnapshot,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
   List<Budget> budgets = await database.getAllBudgets();
   for (Budget budget in budgets) {
@@ -232,12 +636,15 @@ Future<bool> compareSharedToCurrentBudgets(
         }
       }
       if (found == false) {
-        openSnackbar(SnackbarMessage(
+        openSnackbar(
+          SnackbarMessage(
             icon: appStateSettings["outlinedIcons"]
                 ? Icons.remove_circle_outline_outlined
                 : Icons.remove_circle_outline_rounded,
             title: budget.name,
-            description: "Is no longer shared with you"));
+            description: "Is no longer shared with you",
+          ),
+        );
         print("You have lost permission to this budget: " + budget.name);
         removedSharedFromBudget(budget);
       }
@@ -253,13 +660,15 @@ Future<bool> compareSharedToCurrentBudgets(
     }
     if (found == false) {
       Map<dynamic, dynamic> budgetDecoded = budgetCloud.data() as Map;
-      openSnackbar(SnackbarMessage(
-        title: budgetCloud["name"] + " was shared with you",
-        description: "From " + getMemberNickname(budgetDecoded["ownerEmail"]),
-        icon: appStateSettings["outlinedIcons"]
-            ? Icons.share_outlined
-            : Icons.share_rounded,
-      ));
+      openSnackbar(
+        SnackbarMessage(
+          title: budgetCloud["name"] + " was shared with you",
+          description: "From " + getMemberNickname(budgetDecoded["ownerEmail"]),
+          icon: appStateSettings["outlinedIcons"]
+              ? Icons.share_outlined
+              : Icons.share_rounded,
+        ),
+      );
     }
   }
   return true;
@@ -267,10 +676,13 @@ Future<bool> compareSharedToCurrentBudgets(
 
 Timer? cloudTimeoutTimer;
 Future<bool> getCloudBudgets() async {
-  if (appStateSettings["sharedBudgets"] == false) return false;
+  debugPrint("[SharedBudgets] getCloudBudgets requested");
   if (appStateSettings["hasSignedIn"] == false) return false;
   if (errorSigningInDuringCloud == true) return false;
-  if (kIsWeb && !entireAppLoaded) return false;
+  if (kIsWeb &&
+      !entireAppLoaded &&
+      appStateSettings["webForceLoginPopupOnLaunch"] != true)
+    return false;
   FirebaseFirestore? db = await firebaseGetDBInstance();
   if (cloudTimeoutTimer?.isActive == true) {
     // openSnackbar(SnackbarMessage(title: "Please wait..."));
@@ -281,44 +693,135 @@ Future<bool> getCloudBudgets() async {
     });
   }
   if (db == null) {
+    debugPrint("[SharedBudgets] Firestore unavailable; auth failed");
     return false;
   }
 
-  final budgetMembersOf = db.collection('budgets').where('members',
-      arrayContains: FirebaseAuth.instance.currentUser!.email);
-  final QuerySnapshot snapshotBudgetMembersOf = await budgetMembersOf.get();
-  // for (DocumentSnapshot budget in snapshotBudgetMembersOf.docs) {
-  //   print("YOU ARE A MEMBER OF THIS BUDGET " + budget.data().toString());
-  // }
-  final Query budgetOwned = db
-      .collection('budgets')
-      .where('owner', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
-  final QuerySnapshot snapshotOwned = await budgetOwned.get();
-  // for (DocumentSnapshot budget in snapshotOwned.docs) {
-  //   print("YOU OWN THIS BUDGET " + budget.data().toString());
-  // }
-  await compareSharedToCurrentBudgets(
-      [...snapshotBudgetMembersOf.docs, ...snapshotOwned.docs]);
+  final currentUser = FirebaseAuth.instance.currentUser;
+  final currentEmail = currentUser?.email;
+  final currentUid = currentUser?.uid;
+  final normalizedCurrentEmail = currentEmail == null
+      ? null
+      : normalizeSharedBudgetEmail(currentEmail);
+  debugPrint(
+    "[SharedBudgets] Fetching for uid=$currentUid email=$currentEmail",
+  );
+
+  Future<QuerySnapshot?> runSharedBudgetQuery(String label, Query query) async {
+    try {
+      final snapshot = await query.get().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw TimeoutException("Shared budget query timed out: $label");
+        },
+      );
+      debugPrint(
+        "[SharedBudgets] $label returned ${snapshot.docs.length} budgets: "
+        "${snapshot.docs.map((doc) => doc.id).join(', ')}",
+      );
+      return snapshot;
+    } on FirebaseException catch (error) {
+      debugPrint(
+        "[SharedBudgets] $label failed: ${error.code} ${error.message}",
+      );
+      return null;
+    } catch (error) {
+      debugPrint("[SharedBudgets] $label failed: $error");
+      return null;
+    }
+  }
+
+  final snapshotBudgetMembersOf =
+      normalizedCurrentEmail == null || normalizedCurrentEmail.trim().isEmpty
+      ? null
+      : await runSharedBudgetQuery(
+          "members arrayContains email",
+          db
+              .collection('budgets')
+              .where('members', arrayContains: normalizedCurrentEmail),
+        );
+  final snapshotBudgetMembersOfLower =
+      currentEmail == null || currentEmail == normalizedCurrentEmail
+      ? null
+      : await runSharedBudgetQuery(
+          "members arrayContains lower email",
+          db
+              .collection('budgets')
+              .where(
+                'members',
+                arrayContains: normalizedCurrentEmail,
+              ),
+        );
+  final snapshotOwnedByUid = currentUid == null || currentUid.trim().isEmpty
+      ? null
+      : await runSharedBudgetQuery(
+          "owner uid",
+          db.collection('budgets').where('owner', isEqualTo: currentUid),
+        );
+  final snapshotOwnedByEmail =
+      normalizedCurrentEmail == null || normalizedCurrentEmail.trim().isEmpty
+      ? null
+      : await runSharedBudgetQuery(
+          "owner email",
+          db.collection('budgets').where(
+                'ownerEmail',
+                isEqualTo: normalizedCurrentEmail,
+              ),
+        );
+  final snapshotOwnedByLowerEmail =
+      currentEmail == null || currentEmail == normalizedCurrentEmail
+      ? null
+      : await runSharedBudgetQuery(
+          "owner lower email",
+          db
+              .collection('budgets')
+              .where(
+                'ownerEmail',
+                isEqualTo: normalizedCurrentEmail,
+              ),
+        );
+
+  final Map<String, DocumentSnapshot> budgetsById = {
+    for (final budget in [
+      ...?snapshotBudgetMembersOf?.docs,
+      ...?snapshotBudgetMembersOfLower?.docs,
+      ...?snapshotOwnedByUid?.docs,
+      ...?snapshotOwnedByEmail?.docs,
+      ...?snapshotOwnedByLowerEmail?.docs,
+    ])
+      budget.id: budget,
+  };
+  final List<DocumentSnapshot> sharedBudgetDocs = budgetsById.values.toList();
+  int amountSynced = sharedBudgetDocs.length;
+  debugPrint("[SharedBudgets] Total unique budgets fetched: $amountSynced");
+  if (amountSynced > 0 && appStateSettings["sharedBudgets"] == false) {
+    await updateSettings(
+      "sharedBudgets",
+      true,
+      updateGlobalState: true,
+      pagesNeedingRefresh: [0, 1, 2, 3],
+    );
+  }
+  await compareSharedToCurrentBudgets(sharedBudgetDocs);
 
   int totalTransactionsUpdated = 0;
-  totalTransactionsUpdated = totalTransactionsUpdated +
-      await downloadTransactionsFromBudgets(db, snapshotBudgetMembersOf.docs);
-  totalTransactionsUpdated = totalTransactionsUpdated +
-      await downloadTransactionsFromBudgets(db, snapshotOwned.docs);
-  int amountSynced =
-      snapshotBudgetMembersOf.docs.length + snapshotOwned.docs.length;
+  totalTransactionsUpdated =
+      totalTransactionsUpdated +
+      await downloadTransactionsFromBudgets(db, sharedBudgetDocs);
   if (amountSynced > 0 && totalTransactionsUpdated > 0)
     openSnackbar(
       SnackbarMessage(
         icon: appStateSettings["outlinedIcons"]
             ? Icons.cloud_sync_outlined
             : Icons.cloud_sync_rounded,
-        title: "synced".tr() +
+        title:
+            "synced".tr() +
             " " +
             totalTransactionsUpdated.toString() +
             " " +
             pluralString(totalTransactionsUpdated == 1, "change"),
-        description: "From " +
+        description:
+            "From " +
             amountSynced.toString() +
             " shared " +
             pluralString(amountSynced == 1, "budget"),
@@ -333,7 +836,9 @@ Future<bool> getCloudBudgets() async {
 }
 
 Future<int> downloadTransactionsFromBudgets(
-    FirebaseFirestore db, List<DocumentSnapshot> snapshots) async {
+  FirebaseFirestore db,
+  List<DocumentSnapshot> snapshots,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return 0;
   int totalUpdated = 0;
   for (DocumentSnapshot budget in snapshots) {
@@ -358,13 +863,21 @@ Future<int> downloadTransactionsFromBudgets(
         order: 0,
         walletFk: "0",
         sharedKey: budget.id,
-        sharedOwnerMember: FirebaseAuth.instance.currentUser!.email ==
-                budgetDecoded["ownerEmail"]
+        sharedOwnerMember:
+            normalizeSharedBudgetEmail(
+                  FirebaseAuth.instance.currentUser!.email ?? "",
+                ) ==
+                normalizeSharedBudgetEmail(
+                  budgetDecoded["ownerEmail"]?.toString() ?? "",
+                )
             ? SharedOwnerMember.owner
             : SharedOwnerMember.member,
         sharedMembers: [
-          budgetDecoded["ownerEmail"],
-          ...List<String>.from(budgetDecoded["members"]),
+          normalizeSharedBudgetEmail(
+            budgetDecoded["ownerEmail"]?.toString() ?? "",
+          ),
+          ...List<String>.from(budgetDecoded["members"])
+              .map(normalizeSharedBudgetEmail),
         ],
         budgetTransactionFilters: [],
         memberTransactionFilters: null,
@@ -379,16 +892,20 @@ Future<int> downloadTransactionsFromBudgets(
     Query transactionsFromServer;
     if (sharedBudget.sharedDateUpdated == null) {
       print("Download all transactions");
-      transactionsFromServer =
-          db.collection('budgets').doc(budget.id).collection('transactions');
+      transactionsFromServer = db
+          .collection('budgets')
+          .doc(budget.id)
+          .collection('transactions');
     } else {
       print(sharedBudget.sharedDateUpdated);
       transactionsFromServer = db
           .collection('budgets')
           .doc(budget.id)
           .collection('transactions')
-          .where(FieldPath.fromString("dateUpdated"),
-              isGreaterThan: sharedBudget.sharedDateUpdated);
+          .where(
+            FieldPath.fromString("dateUpdated"),
+            isGreaterThan: sharedBudget.sharedDateUpdated,
+          );
     }
     final QuerySnapshot snapshotTransactionsFromServer =
         await transactionsFromServer.get();
@@ -399,8 +916,9 @@ Future<int> downloadTransactionsFromBudgets(
           transaction["logType"] == "update") {
         TransactionCategory selectedCategory;
         try {
-          selectedCategory = await database
-              .getCategoryInstanceGivenName(transactionDecoded["categoryName"]);
+          selectedCategory = await database.getCategoryInstanceGivenName(
+            transactionDecoded["categoryName"],
+          );
         } catch (_) {
           int numberOfCategories =
               (await database.getTotalCountOfCategories())[0] ?? 0;
@@ -418,8 +936,9 @@ Future<int> downloadTransactionsFromBudgets(
               methodAdded: MethodAdded.shared,
             ),
           );
-          selectedCategory = await database
-              .getCategoryInstanceGivenName(transactionDecoded["categoryName"]);
+          selectedCategory = await database.getCategoryInstanceGivenName(
+            transactionDecoded["categoryName"],
+          );
         }
 
         await database.createOrUpdateFromSharedTransaction(
@@ -452,12 +971,15 @@ Future<int> downloadTransactionsFromBudgets(
         if (transactionDecoded["name"] != null &&
             transactionDecoded["name"] != "")
           await addAssociatedTitles(
-              transactionDecoded["name"], selectedCategory);
+            transactionDecoded["name"],
+            selectedCategory,
+          );
       } else if (transaction["logType"] == "delete") {
         print("DELETING");
         try {
           await database.deleteFromSharedTransaction(
-              transactionDecoded["deleteSharedKey"]);
+            transactionDecoded["deleteSharedKey"],
+          );
         } catch (e) {
           print("This shared transaction already deleted" + e.toString());
         }
@@ -468,11 +990,17 @@ Future<int> downloadTransactionsFromBudgets(
     }
     Budget budgetAlreadyStored = (await database.getSharedBudget(budget.id));
     allMembersEver.addAll((budgetAlreadyStored.sharedMembers ?? []).toSet());
-    allMembersEver
-        .addAll((budgetAlreadyStored.sharedAllMembersEver ?? []).toSet());
-    await database.createOrUpdateFromSharedBudget(sharedBudget.copyWith(
-        sharedDateUpdated: Value(DateTime.now()),
-        sharedAllMembersEver: Value(allMembersEver.toList())));
+    allMembersEver.addAll(
+      (budgetAlreadyStored.sharedAllMembersEver ?? []).toSet(),
+    );
+    final updatedSharedBudget = sharedBudget.copyWith(
+      sharedDateUpdated: Value(DateTime.now()),
+      sharedAllMembersEver: Value(allMembersEver.toList()),
+    );
+    await database.createOrUpdateFromSharedBudget(updatedSharedBudget);
+    if (updatedSharedBudget.sharedOwnerMember == SharedOwnerMember.owner) {
+      unawaited(_ensureCometChatSharedBudget(updatedSharedBudget));
+    }
 
     print("DOWNLOADED FROM THIS BUDGET " + budget.data().toString());
   }
@@ -487,8 +1015,8 @@ Future<bool> sendTransactionSet(Transaction transaction, Budget budget) async {
   if (db == null) {
     Map<dynamic, dynamic> currentSendTransactionsToServerQueue =
         appStateSettings["sendTransactionsToServerQueue"];
-    currentSendTransactionsToServerQueue[transaction.transactionPk.toString()] =
-        {
+    currentSendTransactionsToServerQueue[transaction.transactionPk
+        .toString()] = {
       "action": "sendTransactionSet",
       "transactionPk": transaction.transactionPk.toString(),
       "budgetPk": budget.budgetPk.toString(),
@@ -508,12 +1036,18 @@ Future<bool> sendTransactionSet(Transaction transaction, Budget budget) async {
 
 // update the entry on the server
 Future<bool> setOnServer(
-    FirebaseFirestore db, Transaction transaction, Budget budget) async {
+  FirebaseFirestore db,
+  Transaction transaction,
+  Budget budget,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
-  TransactionCategory transactionCategory =
-      await database.getCategoryInstance(transaction.categoryFk);
-  CollectionReference subCollectionRef =
-      db.collection('budgets').doc(budget.sharedKey).collection("transactions");
+  TransactionCategory transactionCategory = await database.getCategoryInstance(
+    transaction.categoryFk,
+  );
+  CollectionReference subCollectionRef = db
+      .collection('budgets')
+      .doc(budget.sharedKey)
+      .collection("transactions");
   await subCollectionRef.doc(transaction.sharedKey).set({
     "logType": "update", // create, delete, update
     "name": transaction.name,
@@ -533,8 +1067,10 @@ Future<bool> setOnServer(
     sharedOldKey: Value(transaction.sharedKey),
   );
   print("Transaction updated on server: " + transaction.toString());
-  await database.createOrUpdateTransaction(transaction,
-      updateSharedEntry: false);
+  await database.createOrUpdateTransaction(
+    transaction,
+    updateSharedEntry: false,
+  );
   return true;
 }
 
@@ -544,8 +1080,8 @@ Future<bool> sendTransactionAdd(Transaction transaction, Budget budget) async {
   if (db == null) {
     Map<dynamic, dynamic> currentSendTransactionsToServerQueue =
         appStateSettings["sendTransactionsToServerQueue"];
-    currentSendTransactionsToServerQueue[transaction.transactionPk.toString()] =
-        {
+    currentSendTransactionsToServerQueue[transaction.transactionPk
+        .toString()] = {
       "action": "sendTransactionAdd",
       "transactionPk": transaction.transactionPk.toString(),
       "budgetPk": budget.budgetPk.toString(),
@@ -564,12 +1100,18 @@ Future<bool> sendTransactionAdd(Transaction transaction, Budget budget) async {
 }
 
 Future<bool> addOnServer(
-    FirebaseFirestore db, Transaction transaction, Budget budget) async {
+  FirebaseFirestore db,
+  Transaction transaction,
+  Budget budget,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
-  TransactionCategory transactionCategory =
-      await database.getCategoryInstance(transaction.categoryFk);
-  CollectionReference subCollectionRef =
-      db.collection('budgets').doc(budget.sharedKey).collection("transactions");
+  TransactionCategory transactionCategory = await database.getCategoryInstance(
+    transaction.categoryFk,
+  );
+  CollectionReference subCollectionRef = db
+      .collection('budgets')
+      .doc(budget.sharedKey)
+      .collection("transactions");
   DocumentReference addedDocument = await subCollectionRef.add({
     "logType": "create", // create, delete, update
     "name": transaction.name,
@@ -588,25 +1130,30 @@ Future<bool> addOnServer(
     sharedKey: Value(addedDocument.id),
     sharedOldKey: Value(addedDocument.id),
     transactionOwnerEmail: Value(transaction.transactionOwnerEmail),
-    transactionOriginalOwnerEmail:
-        Value(FirebaseAuth.instance.currentUser!.email),
+    transactionOriginalOwnerEmail: Value(
+      FirebaseAuth.instance.currentUser!.email,
+    ),
     sharedStatus: Value(SharedStatus.shared),
     sharedDateUpdated: Value(DateTime.now()),
   );
-  await database.createOrUpdateTransaction(transaction,
-      updateSharedEntry: false);
+  await database.createOrUpdateTransaction(
+    transaction,
+    updateSharedEntry: false,
+  );
   return true;
 }
 
 Future<bool> sendTransactionDelete(
-    Transaction transaction, Budget budget) async {
+  Transaction transaction,
+  Budget budget,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
   FirebaseFirestore? db = await firebaseGetDBInstance();
   if (db == null) {
     Map<dynamic, dynamic> currentSendTransactionsToServerQueue =
         appStateSettings["sendTransactionsToServerQueue"];
-    currentSendTransactionsToServerQueue[transaction.transactionPk.toString()] =
-        {
+    currentSendTransactionsToServerQueue[transaction.transactionPk
+        .toString()] = {
       "action": "sendTransactionDelete",
       "transactionSharedKey": transaction.sharedKey.toString(),
       "budgetPk": budget.budgetPk.toString(),
@@ -625,7 +1172,10 @@ Future<bool> sendTransactionDelete(
 }
 
 Future<bool> deleteOnServer(
-    FirebaseFirestore db, String? transactionSharedKey, Budget budget) async {
+  FirebaseFirestore db,
+  String? transactionSharedKey,
+  Budget budget,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
   if (transactionSharedKey != null && transactionSharedKey != "null") {
     CollectionReference subCollectionRef = db
@@ -662,7 +1212,8 @@ Future<bool> syncPendingQueueOnServer() async {
       Budget budget;
       try {
         budget = await database.getBudgetInstance(
-            currentSendTransactionsToServerQueue[key]["budgetPk"].toString());
+          currentSendTransactionsToServerQueue[key]["budgetPk"].toString(),
+        );
       } catch (e) {
         print(e.toString());
         // budget was probably deleted, we don't need to sync anything...
@@ -672,14 +1223,15 @@ Future<bool> syncPendingQueueOnServer() async {
       if (currentSendTransactionsToServerQueue[key]["action"] ==
           "sendTransactionDelete") {
         await deleteOnServer(
-            db,
-            currentSendTransactionsToServerQueue[key]["transactionSharedKey"],
-            budget);
+          db,
+          currentSendTransactionsToServerQueue[key]["transactionSharedKey"],
+          budget,
+        );
       }
 
       Transaction transaction = await database.getTransactionFromPk(
-          currentSendTransactionsToServerQueue[key]["transactionPk"]
-              .toString());
+        currentSendTransactionsToServerQueue[key]["transactionPk"].toString(),
+      );
       print("UPLOADING THIS TRANSACTION");
       print(transaction);
       if (currentSendTransactionsToServerQueue[key]["action"] ==
@@ -694,24 +1246,30 @@ Future<bool> syncPendingQueueOnServer() async {
       print("skipping syncing this transaction...");
     }
   }
-  updateSettings("sendTransactionsToServerQueue", {},
-      pagesNeedingRefresh: [], updateGlobalState: false);
+  updateSettings(
+    "sendTransactionsToServerQueue",
+    {},
+    pagesNeedingRefresh: [],
+    updateGlobalState: false,
+  );
   return true;
 }
 
 Future<bool> updateTransactionOnServerAfterChangingCategoryInformation(
-    TransactionCategory category) async {
+  TransactionCategory category,
+) async {
   if (appStateSettings["sharedBudgets"] == false) return false;
   loadingIndeterminateKey.currentState?.setVisibility(true);
-  List<Transaction> sharedTransactionsInCategory =
-      await database.getAllTransactionsSharedInCategory(category.categoryPk);
+  List<Transaction> sharedTransactionsInCategory = await database
+      .getAllTransactionsSharedInCategory(category.categoryPk);
 
   List<Future> asyncCalls = [];
   for (Transaction transaction in sharedTransactionsInCategory) {
     // update all shared transactions one by one, need to update the server
     if (transaction.sharedReferenceBudgetPk != null) {
-      Budget budget = await database
-          .getBudgetInstance(transaction.sharedReferenceBudgetPk!);
+      Budget budget = await database.getBudgetInstance(
+        transaction.sharedReferenceBudgetPk!,
+      );
       asyncCalls.add(sendTransactionSet(transaction, budget));
     }
   }

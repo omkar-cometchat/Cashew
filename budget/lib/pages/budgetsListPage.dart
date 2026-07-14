@@ -2,8 +2,10 @@ import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/pages/editBudgetPage.dart';
+import 'package:budget/pages/sharedBudgetRequestsPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
+import 'package:budget/struct/shareBudget.dart';
 import 'package:budget/widgets/budgetContainer.dart';
 import 'package:budget/widgets/navigationSidebar.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
@@ -16,7 +18,7 @@ import 'addButton.dart';
 
 class BudgetsListPage extends StatefulWidget {
   const BudgetsListPage({required this.enableBackButton, Key? key})
-      : super(key: key);
+    : super(key: key);
   final bool enableBackButton;
 
   @override
@@ -43,14 +45,59 @@ class BudgetsListPageState extends State<BudgetsListPage> {
       dragDownToDismiss: widget.enableBackButton,
       horizontalPaddingConstrained: enableDoubleColumn(context) == false,
       actions: [
+        if (appStateSettings["sharedBudgets"] == true)
+          FutureBuilder<int>(
+            future: getPendingSharedBudgetInvitesCount(),
+            builder: (context, snapshot) {
+              final count = snapshot.data ?? 0;
+              return Stack(
+                alignment: AlignmentDirectional.topEnd,
+                children: [
+                  IconButton(
+                    padding: EdgeInsetsDirectional.all(15),
+                    tooltip: "Shared Requests",
+                    onPressed: () {
+                      pushRoute(context, SharedBudgetRequestsPage());
+                    },
+                    icon: Icon(
+                      appStateSettings["outlinedIcons"]
+                          ? Icons.group_add_outlined
+                          : Icons.group_add_rounded,
+                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                  if (count > 0)
+                    PositionedDirectional(
+                      end: 8,
+                      top: 8,
+                      child: Container(
+                        padding: EdgeInsetsDirectional.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.error,
+                          borderRadius: BorderRadiusDirectional.circular(10),
+                        ),
+                        child: Text(
+                          count > 9 ? "9+" : count.toString(),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onError,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         IconButton(
           padding: EdgeInsetsDirectional.all(15),
           tooltip: "edit-budgets".tr(),
           onPressed: () {
-            pushRoute(
-              context,
-              EditBudgetPage(),
-            );
+            pushRoute(context, EditBudgetPage());
           },
           icon: Icon(
             appStateSettings["outlinedIcons"]
@@ -67,7 +114,8 @@ class BudgetsListPageState extends State<BudgetsListPage> {
               pushRoute(
                 context,
                 AddBudgetPage(
-                    routesToPopAfterDelete: RoutesToPopAfterDelete.None),
+                  routesToPopAfterDelete: RoutesToPopAfterDelete.None,
+                ),
               );
             },
             icon: Icon(
@@ -85,7 +133,9 @@ class BudgetsListPageState extends State<BudgetsListPage> {
             if (snapshot.hasData && (snapshot.data ?? []).length <= 0) {
               return SliverPadding(
                 padding: EdgeInsetsDirectional.symmetric(
-                    vertical: 7, horizontal: 13),
+                  vertical: 7,
+                  horizontal: 13,
+                ),
                 sliver: SliverToBoxAdapter(
                   child: AddButton(
                     onTap: () {},
@@ -101,7 +151,9 @@ class BudgetsListPageState extends State<BudgetsListPage> {
             if (snapshot.hasData) {
               return SliverPadding(
                 padding: EdgeInsetsDirectional.symmetric(
-                    vertical: 7, horizontal: 13),
+                  vertical: 7,
+                  horizontal: 13,
+                ),
                 sliver: enableDoubleColumn(context)
                     ? SliverGrid(
                         gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
@@ -111,24 +163,24 @@ class BudgetsListPageState extends State<BudgetsListPage> {
                           crossAxisSpacing: 15.0,
                           childAspectRatio: 5,
                         ),
-                        delegate: SliverChildBuilderDelegate(
-                          (BuildContext context, int index) {
-                            if (index == snapshot.data?.length) {
-                              return AddButton(
-                                onTap: () {},
-                                openPage: AddBudgetPage(
-                                  routesToPopAfterDelete:
-                                      RoutesToPopAfterDelete.PreventDelete,
-                                ),
-                              );
-                            } else {
-                              return BudgetContainer(
-                                budget: snapshot.data![index],
-                              );
-                            }
-                          },
-                          childCount: (snapshot.data?.length ?? 0) + 1,
-                        ),
+                        delegate: SliverChildBuilderDelegate((
+                          BuildContext context,
+                          int index,
+                        ) {
+                          if (index == snapshot.data?.length) {
+                            return AddButton(
+                              onTap: () {},
+                              openPage: AddBudgetPage(
+                                routesToPopAfterDelete:
+                                    RoutesToPopAfterDelete.PreventDelete,
+                              ),
+                            );
+                          } else {
+                            return BudgetContainer(
+                              budget: snapshot.data![index],
+                            );
+                          }
+                        }, childCount: (snapshot.data?.length ?? 0) + 1),
                       )
                     : SliverList(
                         delegate: SliverChildBuilderDelegate(
@@ -145,7 +197,8 @@ class BudgetsListPageState extends State<BudgetsListPage> {
                             } else {
                               return Padding(
                                 padding: const EdgeInsetsDirectional.only(
-                                    bottom: 16.0),
+                                  bottom: 16.0,
+                                ),
                                 child: BudgetContainer(
                                   budget: snapshot.data![index],
                                   squishInactiveBudgetContainerHeight: true,
@@ -153,7 +206,8 @@ class BudgetsListPageState extends State<BudgetsListPage> {
                               );
                             }
                           },
-                          childCount: (snapshot.data?.length ?? 0) +
+                          childCount:
+                              (snapshot.data?.length ?? 0) +
                               1, //snapshot.data?.length
                         ),
                       ),
@@ -163,9 +217,7 @@ class BudgetsListPageState extends State<BudgetsListPage> {
             }
           },
         ),
-        SliverToBoxAdapter(
-          child: SizedBox(height: 50),
-        ),
+        SliverToBoxAdapter(child: SizedBox(height: 50)),
       ],
     );
   }

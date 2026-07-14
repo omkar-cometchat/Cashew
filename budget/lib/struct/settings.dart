@@ -107,6 +107,7 @@ Future<bool> initializeSettings() async {
 
   appStateSettings["appOpenedHour"] = DateTime.now().hour;
   appStateSettings["appOpenedMinute"] = DateTime.now().minute;
+  appStateSettings["sharedBudgets"] = true;
 
   String? retrievedClientID = await sharedPreferences.getString("clientID");
   if (retrievedClientID == null) {
